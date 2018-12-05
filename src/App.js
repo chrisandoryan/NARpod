@@ -7,6 +7,7 @@ import AceEditor from 'react-ace';
 import SideNav, { Toggle, Nav, NavItem, NavIcon, NavText } from '@trendmicro/react-sidenav';
 import Dropzone from 'react-dropzone';
 import Modal from 'react-responsive-modal';
+import StringSimilarity from 'string-similarity';
 
 // Be sure to include styles at some point, probably during your bootstraping
 import '@trendmicro/react-sidenav/dist/react-sidenav.css';
@@ -16,89 +17,43 @@ import 'brace/theme/github';
 
 const patterns = {
   output: /System.out.print(ln|f)?\(.+\);/,
+  outputl: /System.out/,
   input: /(import java.util.(\*|Scanner);)(.|\n)+?(\w+\.next(Line|Int|Double)\(\);)/s,
+  inputl: /.*?Scanner.*?/,
   floop: /for\s*\(int \w+\s*=\s*\d;\s*\w\s*(<|>|<=|>=)\s*.+;\s*\w+(\+\+|\-\-)\)\s*\{((.|\n)+?)\}/gms,
+  floopl: /for\(int.*?/,
   dwloop: /(do\s*\{((.|\n)+?)\}\s*while(.+);)/gms,
   wloop: /'while\((.+)\)\s*\{((.|\n)+?)\}/gms,
   switchcase: /'switch\s*\(\w+\)\s*\{(.|\n)+?case .+?:((.|\n)+?;)(.|\n)+?break;(.|\n)+?\}/gms,
   if: /if\s*\(.+\)\s*\{((.|\n)+?)\}/gms,
-  declare_array: /.+(\[\])? \w+?(\[\])?\s*=\s*new \w+\[.+?\];/gms,
-  declare_arrlist: /(ArrayList\s*<.+?> .+?\s*=\s*new ArrayList\s*<(.+?)?>\((.+?)?\);)/gms,
-  declare_vector: /(Vector\s*<(.+?)> .+?\s*=\s*new Vector\s*<(.+?)?>\((.+?)?\);)/gms
+  declare_array: /.+(\[\])? \w+?(\[\])?\s*=\s*new \w+\[.+?\];/,
+  declare_arrlist: /(ArrayList\s*<.+?> .+?\s*=\s*new ArrayList\s*<(.+?)?>\((.+?)?\);)/,
+  declare_vector: /((Vector\s*<(.+?)> .+?)\s*=\s*new Vector\s*<(.+?)?>\((.+?)?\);)/,
+  arlvec_usage: /(.+?\.((add|get|set|size|)\(.*?\));)/
 }
 
-const renderResultTemplate = (
-  fileName, 
-  inputResult, 
-  outputResult, 
-  loopResult, 
-  selectionResult, 
-  arrayDeclare, 
-  arrayUsage) => {
+const renderCorrectionResult = (
+    fileName,
+    inputScore,
+    outputScore,
+    loopScore,
+    selectionScore,
+    arrayDeclareScore,
+    arrayUsageScore
+  ) => {
   return `
-Filename: ${fileName}
 
-Automated Correction Result
----------------------------
-I   O   Loop    Selection   ArrayDeclare    ArrayUsage
-3   3   1       3           1               0
+    Filename: ${fileName}
 
+    Automated Correction Result
+    ---------------------------
+    Input               : ${inputScore} / 3
+    Output              : ${outputScore} / 3
+    Looping             : ${loopScore} / 5
+    Selection           : ${selectionScore} / 5
+    Array Declaration   : ${arrayDeclareScore} / 3
+    Array Usage         : ${arrayUsageScore} / 3
 
-Manual Review Section
----------------------
-
-----------------------------------------------------------------------------------------------------------
-[I]
-
-${inputResult}    
-
-
-__________________________________________________________________________________________________________
-
-
-----------------------------------------------------------------------------------------------------------
-[O]
-
-${outputResult}
-
-
-__________________________________________________________________________________________________________
-
-
-----------------------------------------------------------------------------------------------------------
-[Loop]
-
-${loopResult}
-
-
-__________________________________________________________________________________________________________
-
-
-----------------------------------------------------------------------------------------------------------
-[Selection]
-
-${selectionResult}
-
-
-__________________________________________________________________________________________________________
-
-
-----------------------------------------------------------------------------------------------------------
-[ArrayDeclare]
-
-${arrayDeclare}
-
-
-__________________________________________________________________________________________________________
-
-
-----------------------------------------------------------------------------------------------------------
-[ArrayUsage]
-
-${arrayUsage}
-
-
-__________________________________________________________________________________________________________
   `
 }
 
@@ -110,8 +65,43 @@ class App extends Component {
       modalOpen: false,
       files: [],
       selectedFile: {},
-      displayContent: ''
+      displayContent: '',
+      selectedFilePosition: -1,
     }
+    
+  }
+
+  navigateUsingKeystroke = (e) => {
+    //right
+    if(e.keyCode === 39) { 
+      if(this.state.selectedFilePosition + 1 >= 0 && this.state.selectedFilePosition + 1 < this.state.files.length) {
+        this.setState({
+          selectedFilePosition: this.state.selectedFilePosition + 1,
+          selectedFile: this.state.files[this.state.selectedFilePosition + 1]
+        });
+        console.log(this.state.files[this.state.selectedFilePosition]);
+        this.testAutomatedCorrection(this.state.selectedFile.fileContent);
+      }
+    }
+    //left
+    if(e.keyCode === 37) {
+      if(this.state.selectedFilePosition - 1 >= 0 && this.state.selectedFilePosition - 1 < this.state.files.length) {
+        this.setState({
+          selectedFilePosition: this.state.selectedFilePosition - 1,
+          selectedFile: this.state.files[this.state.selectedFilePosition - 1]
+        });
+        console.log(this.state.files[this.state.selectedFilePosition]);
+        this.testAutomatedCorrection(this.state.selectedFile.fileContent);
+      }
+    }
+  }
+
+  componentDidMount() {
+    document.addEventListener("keydown", this.navigateUsingKeystroke, false);
+  }
+
+  componentWillUnmount() {
+    document.removeEventListener("keydown", this.navigateUsingKeystroke, false);
   }
 
   onChange = (newValue) => {
@@ -202,11 +192,20 @@ class App extends Component {
     return patterns.declare_vector.exec(ans);
   }
 
-  testArrayUsageSyntax = (ans) => {
+  testArlVecUsageSyntax = (ans) => {
+    return patterns.arlvec_usage.exec(ans);
+  }
 
+  safelyNullifyResult = (result, position) => {
+    console.log(result);
+    if (result != null)
+      return result[position];
+    else
+      return 'null';
   }
 
   testAutomatedCorrection = (ans) => {
+
     let checkInput = (this.testInputSyntax(ans))
     let checkOutput = (this.testOutputSyntax(ans))
     let checkFLoop = (this.testForLoopSyntax(ans))
@@ -217,17 +216,21 @@ class App extends Component {
     let checkArrDeclare = (this.testArrayDeclarationSyntax(ans))
     let checkArrListDeclare = (this.testArrayListDeclarationSyntax(ans))
     let checkVecDeclare = (this.testVectorDeclarationSyntax(ans))
+    let checkArlVecUsage = (this.testArlVecUsageSyntax(ans))
+      
+
     this.setState({
-      displayContent: renderResultTemplate(
+      displayContent: renderCorrectionResult(
         this.state.selectedFile.fileName,
-        checkInput[1] || 'null' + '\n' + checkInput[4] || 'null',
-        checkOutput[0] || 'null',
-        checkFLoop || 'null' + '\n' + checkDWLoop || 'null' + '\n' + checkWLoop || 'null',
-        'f',
-        'g',
-        'e'
+        checkInput ? 3 : ans.search('Scanner') >= 0 ? 1 : 0,
+        checkOutput ? 3 : ans.search('System.out.print') >=0 ? 1 : 0,
+        checkFLoop || checkDWLoop || checkWLoop ? 5 : ans.search('for') >=0 || ans.search('while') >=0 ? 3 : 1,
+        checkIfSelection || checkSwitchSelection ? 5 : ans.search('if') >=0 || ans.search('switch') >=0 ? 3 : 1,
+        checkArrDeclare || checkArrListDeclare || checkVecDeclare ? 3 : ans.search('Array') >=0 || ans.search('Vector') >=0 || ans.search('ArrayList') >=0 ? 1 : 0,
+        checkArlVecUsage ? 3 : 0
       )
-    })
+    });
+
   }
 
   render() {
@@ -274,7 +277,7 @@ class App extends Component {
             </NavText>
                   {
                     this.state.files.map((file, i) => (
-                      <NavItem eventKey="files/linechart" key={i} onClick={() => { this.displayContent(i) }}>
+                      <NavItem eventKey="files/viewfile" key={i} onClick={() => { this.displayContent(i) }}>
                         <NavText>
                           {file.fileName}
                         </NavText>
@@ -302,6 +305,7 @@ class App extends Component {
               name="editor"
               height={window.innerHeight}
               fontSize={18}
+              editorProps={{ $blockScrolling: Infinity }}
             />
           </div>
         </div>
