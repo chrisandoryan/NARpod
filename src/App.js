@@ -18,24 +18,44 @@ class Note extends Component {
   constructor(props) {
     super(props)
     this.state = {
-      toggleClass: true,
-      modalOpen: false,
-      files: [],
-      selectedFile: {},
+      isToiletHeaderDisplayed: false,
+      isEventHeaderDisplayed: false,
       displayContent: '',
-      selectedFilePosition: -1,
     }
   }
 
   addTimestamp = () => {
     let editor = this.refs.ace.editor;
-    console.log(editor.getCursorPosition())
-    editor.session.insert({row: editor.getCursorPosition().row, column: 0}, new Date().toLocaleTimeString() + '\n');
+    editor.session.insert(editor.getCursorPosition(), new Date().toLocaleTimeString() + '\n');
+  }
+
+  addToiletPermission = () => {
+    let editor = this.refs.ace.editor;
+    if (!this.state.isToiletHeaderDisplayed) {
+      editor.session.insert({ row: editor.getCursorPosition().row + 1, column: 0 }, "==========\nTOILET\n==========\n");
+      this.state.isToiletHeaderDisplayed = true;
+    }
+    const template = '[TXXX] : ' + new Date().toLocaleTimeString() + ' - [End Time]';
+    editor.session.insert({ row: editor.getCursorPosition().row + 1, column: 0 }, template);
+    editor.find("XXX");
+  }
+
+  addRoomEvent = () => {
+    let editor = this.refs.ace.editor;
+    if (!this.state.isEventHeaderDisplayed) {
+      editor.session.insert({ row: editor.getCursorPosition().row + 1, column: 0 }, "==========\nOTHERS\n==========\n");
+      this.state.isEventHeaderDisplayed = true;
+    }
+    const template = '[TXXX] : ' + new Date().toLocaleTimeString() + ' - [End Time]\n[Comment Here]';
+    editor.session.insert({ row: editor.getCursorPosition().row + 1, column: 0 }, template);
+    editor.find("XXX");
   }
 
   render() {
     const handlers = {
-      ADD_TIMESTAMP: this.addTimestamp
+      ADD_TIMESTAMP: this.addTimestamp,
+      ADD_TOILET: this.addToiletPermission,
+      ADD_EVENT: this.addRoomEvent,
     };
     return (
       <HotKeys handlers={handlers}>
@@ -127,7 +147,9 @@ class App extends Component {
 
   render() {
     const keyMap = {
-      ADD_TIMESTAMP: 'alt+w',
+      ADD_TIMESTAMP: 'alt+q',
+      ADD_TOILET: 'alt+w',
+      ADD_EVENT: 'alt+r',
     };
     return (
       <React.Fragment>
